@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "backrooms",
+	"version": "${version}",
+	"name": "The Backrooms",
+	"description": "A Minecraft mod that brings the unsettling liminal spaces of The Backrooms to life.",
+	"authors": [
+		"You"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": ""
+	},
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.backrooms.BackroomsMod"
+		],
+		"client": [
+			"com.backrooms.client.BackroomsClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	}
+}

@@ -1,5 +1,7 @@
 package com.backrooms;
 
+import com.backrooms.event.BlockPlacementHandler;
+import com.backrooms.event.DoorInteractionHandler;
 import net.fabricmc.api.ModInitializer;
 
 import org.slf4j.Logger;
@@ -14,5 +16,11 @@ public class BackroomsMod implements ModInitializer {
 		LOGGER.info("Initializing The Backrooms mod...");
 		ModBlocks.register();
 		ModDimensions.register();
+		
+		// Register scanning events
+		BlockPlacementHandler.register();
+		DoorInteractionHandler.register();
+		
+		LOGGER.info("Scanning system registered!");
 	}
 }

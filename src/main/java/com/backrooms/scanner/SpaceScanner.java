@@ -21,6 +21,7 @@ import java.util.Set;
 public class SpaceScanner {
     
     private static final int MAX_SCAN_SIZE = 2500; // Maximum blocks to scan to prevent performance issues
+    private static final int MIN_SCAN_SIZE = 5; // Minimum blocks required for a valid room
     private static final String SCAN_OUTPUT_DIR = "backrooms_scans";
     private static final long SCAN_COOLDOWN_MS = 1000; // Cooldown between scans to prevent duplicates
     private static long lastScanTime = 0;
@@ -51,6 +52,13 @@ public class SpaceScanner {
         // If we hit the max scan size, the space is too large or not truly enclosed
         if (enclosedSpace.size() >= MAX_SCAN_SIZE) {
             BackroomsMod.LOGGER.info("Scan hit maximum size limit ({} blocks) - space is too large or not enclosed", MAX_SCAN_SIZE);
+            BackroomsMod.LOGGER.info("=== SCAN COMPLETE: FAILURE ===");
+            return false;
+        }
+        
+        // Check if the space is too small
+        if (enclosedSpace.size() < MIN_SCAN_SIZE) {
+            BackroomsMod.LOGGER.info("Scan found space smaller than minimum size ({} blocks, minimum is {}) - space is too small", enclosedSpace.size(), MIN_SCAN_SIZE);
             BackroomsMod.LOGGER.info("=== SCAN COMPLETE: FAILURE ===");
             return false;
         }
@@ -364,7 +372,7 @@ public class SpaceScanner {
             for (Path file : Files.newDirectoryStream(dir, "*.json")) {
                 String content = Files.readString(file);
                 if (content.contains("\"hash\": \"" + hash + "\"")) {
-                    BackroomsMod.LOGGER.info("Duplicate room detected, skipping save");
+                    BackroomsMod.LOGGER.info("Duplicate room detected (exact hash match)");
                     return true;
                 }
             }
@@ -376,37 +384,183 @@ public class SpaceScanner {
     }
     
     /**
+     * Checks if a room with the same origin and opposite corner already exists
+     */
+    private static java.util.Optional<Path> findExistingRoom(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        try {
+            Path dir = Paths.get(SCAN_OUTPUT_DIR);
+            if (!Files.exists(dir)) {
+                return java.util.Optional.empty();
+            }
+            
+            // Check all JSON files in the directory
+            for (Path file : Files.newDirectoryStream(dir, "*.json")) {
+                String content = Files.readString(file);
+                
+                // Extract origin and calculate opposite corner from existing file
+                String originPattern = "\"roomOrigin\": \\{\"x\": (\\d+), \"y\": (\\d+), \"z\": (\\d+)\\}";
+                java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(originPattern);
+                java.util.regex.Matcher matcher = pattern.matcher(content);
+                
+                if (matcher.find()) {
+                    int existingMinX = Integer.parseInt(matcher.group(1));
+                    int existingMinY = Integer.parseInt(matcher.group(2));
+                    int existingMinZ = Integer.parseInt(matcher.group(3));
+                    
+                    // Calculate opposite corner from block data
+                    int existingMaxX = existingMinX;
+                    int existingMaxY = existingMinY;
+                    int existingMaxZ = existingMinZ;
+                    
+                    // Find max coordinates from blocks
+                    String blockPattern = "\"relX\": (-?\\d+), \"relY\": (-?\\d+), \"relZ\": (-?\\d+)";
+                    java.util.regex.Pattern blockPatternRegex = java.util.regex.Pattern.compile(blockPattern);
+                    java.util.regex.Matcher blockMatcher = blockPatternRegex.matcher(content);
+                    
+                    while (blockMatcher.find()) {
+                        int relX = Integer.parseInt(blockMatcher.group(1));
+                        int relY = Integer.parseInt(blockMatcher.group(2));
+                        int relZ = Integer.parseInt(blockMatcher.group(3));
+                        
+                        int absX = existingMinX + relX;
+                        int absY = existingMinY + relY;
+                        int absZ = existingMinZ + relZ;
+                        
+                        existingMaxX = Math.max(existingMaxX, absX);
+                        existingMaxY = Math.max(existingMaxY, absY);
+                        existingMaxZ = Math.max(existingMaxZ, absZ);
+                    }
+                    
+                    // Check if origin and opposite corner match
+                    if (existingMinX == minX && existingMinY == minY && existingMinZ == minZ &&
+                        existingMaxX == maxX && existingMaxY == maxY && existingMaxZ == maxZ) {
+                        BackroomsMod.LOGGER.info("Found existing room with same origin and opposite corner: {}", file.getFileName());
+                        return java.util.Optional.of(file);
+                    }
+                }
+            }
+            return java.util.Optional.empty();
+        } catch (IOException e) {
+            BackroomsMod.LOGGER.error("Failed to check for existing rooms", e);
+            return java.util.Optional.empty();
+        }
+    }
+    
+    /**
+     * Updates an existing room file with new room data
+     */
+    private static void updateExistingRoom(Path existingFile, Set<BlockPos> fullSpace, Level level, int minX, int minY, int minZ) {
+        try {
+            // Generate new hash for the updated room
+            String roomHash = generateRoomHash(fullSpace, level, new BlockPos(minX, minY, minZ));
+            if (roomHash.isEmpty()) {
+                BackroomsMod.LOGGER.error("Failed to generate room hash for update");
+                return;
+            }
+            
+            FileWriter writer = new FileWriter(existingFile.toFile());
+            
+            writer.write("{\n");
+            writer.write("  \"timestamp\": " + System.currentTimeMillis() + ",\n");
+            writer.write("  \"hash\": \"" + roomHash + "\",\n");
+            writer.write("  \"roomOrigin\": {\"x\": " + minX + ", \"y\": " + minY + ", \"z\": " + minZ + "},\n");
+            writer.write("  \"blockCount\": " + fullSpace.size() + ",\n");
+            writer.write("  \"blocks\": [\n");
+            
+            boolean first = true;
+            for (BlockPos pos : fullSpace) {
+                if (!first) {
+                    writer.write(",\n");
+                }
+                
+                // Calculate normalized coordinates (relative to room minimum)
+                int normX = pos.getX() - minX;
+                int normY = pos.getY() - minY;
+                int normZ = pos.getZ() - minZ;
+                
+                BlockState state = level.getBlockState(pos);
+                String blockId;
+                
+                // Map blocks to output format
+                if (state.isAir()) {
+                    blockId = "minecraft:air";
+                } else if (state.getBlock() instanceof TrapDoorBlock) {
+                    blockId = "minecraft:dark_oak_trapdoor";
+                } else if (state.getBlock() instanceof DoorBlock) {
+                    blockId = "minecraft:dark_oak_door";
+                } else if (isAirOrPassable(level, pos)) {
+                    // Passable blocks (torches, grass, etc.) keep their original block ID
+                    blockId = state.getBlock().toString();
+                } else {
+                    // Solid blocks become wallpaper
+                    blockId = "backrooms:wallpaper";
+                }
+                
+                // Build block data string with state properties
+                StringBuilder blockData = new StringBuilder();
+                blockData.append("{\"relX\": ").append(normX);
+                blockData.append(", \"relY\": ").append(normY);
+                blockData.append(", \"relZ\": ").append(normZ);
+                blockData.append(", \"block\": \"").append(blockId).append("\"");
+                
+                // Add block state properties for doors, trapdoors, and passable blocks
+                if (state.getBlock() instanceof DoorBlock || state.getBlock() instanceof TrapDoorBlock || isAirOrPassable(level, pos)) {
+                    for (net.minecraft.world.level.block.state.properties.Property<?> property : state.getProperties()) {
+                        Comparable<?> value = state.getValue(property);
+                        blockData.append(", \"").append(property.getName()).append("\": \"").append(value).append("\"");
+                    }
+                }
+                
+                blockData.append("}");
+                writer.write("    " + blockData.toString());
+                
+                first = false;
+            }
+            
+            writer.write("\n  ]\n");
+            writer.write("}\n");
+            
+            writer.close();
+            BackroomsMod.LOGGER.info("Updated room file: {}", existingFile.getFileName());
+        } catch (IOException e) {
+            BackroomsMod.LOGGER.error("Failed to update existing room file", e);
+        }
+    }
+    
+    /**
      * Saves the enclosed space data to a file
      */
     private static void saveSpaceToFile(Set<BlockPos> space, Level level, BlockPos playerPos) {
         try {
-            // Generate hash for duplicate detection
-            String roomHash = generateRoomHash(space, level, playerPos);
-            if (roomHash.isEmpty()) {
-                BackroomsMod.LOGGER.error("Failed to generate room hash, skipping save");
-                return;
-            }
-            
-            // Check if this room already exists
-            if (roomHashExists(roomHash)) {
-                BackroomsMod.LOGGER.info("Room already exists (hash: {}), skipping save", roomHash);
-                return;
-            }
-            
-            // Add wallpaper blocks above and below doors to fill holes
+            // Add wallpaper blocks around doors to fill holes
             Set<BlockPos> additionalBlocks = new HashSet<>();
             for (BlockPos pos : space) {
                 BlockState state = level.getBlockState(pos);
                 if (isDoorOrTrapdoor(state)) {
-                    // Add block above the door
-                    BlockPos above = pos.above();
-                    if (!space.contains(above) && !isDoorOrTrapdoor(level.getBlockState(above))) {
-                        additionalBlocks.add(above);
-                    }
-                    // Add block below the door
-                    BlockPos below = pos.below();
-                    if (!space.contains(below) && !isDoorOrTrapdoor(level.getBlockState(below))) {
-                        additionalBlocks.add(below);
+                    // Check all 4 horizontal directions to determine which sides touch the room interior
+                    net.minecraft.core.Direction[] horizontalDirs = {
+                        net.minecraft.core.Direction.NORTH,
+                        net.minecraft.core.Direction.SOUTH,
+                        net.minecraft.core.Direction.EAST,
+                        net.minecraft.core.Direction.WEST
+                    };
+                    
+                    // For each direction, check if it touches the room interior
+                    for (net.minecraft.core.Direction dir : horizontalDirs) {
+                        BlockPos adjacent = pos.relative(dir);
+                        boolean touchesInterior = space.contains(adjacent) && isAirOrPassable(level, adjacent);
+                        
+                        // If this side does NOT touch the interior, add wallpaper blocks
+                        if (!touchesInterior) {
+                            // Add 2 blocks tall on this side
+                            for (int yOffset = 0; yOffset <= 1; yOffset++) {
+                                BlockPos posAtHeight = pos.offset(0, yOffset, 0);
+                                BlockPos sidePos = posAtHeight.relative(dir);
+                                if (!space.contains(sidePos) && !isDoorOrTrapdoor(level.getBlockState(sidePos))) {
+                                    additionalBlocks.add(sidePos);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -415,12 +569,39 @@ public class SpaceScanner {
             Set<BlockPos> fullSpace = new HashSet<>(space);
             fullSpace.addAll(additionalBlocks);
             
-            // Find the minimum coordinates to normalize the room (same as hash)
+            // Find the minimum and maximum coordinates to normalize the room
             int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
             for (BlockPos pos : fullSpace) {
                 minX = Math.min(minX, pos.getX());
                 minY = Math.min(minY, pos.getY());
                 minZ = Math.min(minZ, pos.getZ());
+                maxX = Math.max(maxX, pos.getX());
+                maxY = Math.max(maxY, pos.getY());
+                maxZ = Math.max(maxZ, pos.getZ());
+            }
+            
+            // Generate hash for the new room
+            String roomHash = generateRoomHash(space, level, playerPos);
+            if (roomHash.isEmpty()) {
+                BackroomsMod.LOGGER.error("Failed to generate room hash, skipping save");
+                return;
+            }
+            
+            // Check if exact hash already exists (no changes)
+            if (roomHashExists(roomHash)) {
+                BackroomsMod.LOGGER.info("Room unchanged (hash: {}), skipping save", roomHash);
+                BackroomsMod.LOGGER.info("=== SCAN COMPLETE: FAILURE (UNCHANGED) ===");
+                return;
+            }
+            
+            // Check if a room with the same origin and opposite corner already exists
+            java.util.Optional<Path> existingRoom = findExistingRoom(minX, minY, minZ, maxX, maxY, maxZ);
+            if (existingRoom.isPresent()) {
+                // Update the existing room file
+                updateExistingRoom(existingRoom.get(), fullSpace, level, minX, minY, minZ);
+                BackroomsMod.LOGGER.info("=== SCAN COMPLETE: UPDATED EXISTING ROOM ===");
+                return;
             }
             
             java.io.File dir = new java.io.File(SCAN_OUTPUT_DIR);

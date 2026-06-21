@@ -1,0 +1,10 @@
+{
+  "type": "backrooms:backrooms_dimension_type",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "layers": [],
+      "biome": "minecraft:the_void"
+    }
+  }
+}

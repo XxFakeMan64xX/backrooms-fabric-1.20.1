@@ -13,5 +13,6 @@ public class BackroomsMod implements ModInitializer {
 	public void onInitialize() {
 		LOGGER.info("Initializing The Backrooms mod...");
 		ModBlocks.register();
+		ModDimensions.register();
 	}
 }

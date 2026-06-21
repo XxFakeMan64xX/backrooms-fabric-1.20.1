@@ -20,7 +20,7 @@ import java.util.Set;
 
 public class SpaceScanner {
     
-    private static final int MAX_SCAN_SIZE = 1000; // Maximum blocks to scan to prevent performance issues
+    private static final int MAX_SCAN_SIZE = 2500; // Maximum blocks to scan to prevent performance issues
     private static final String SCAN_OUTPUT_DIR = "backrooms_scans";
     private static final long SCAN_COOLDOWN_MS = 1000; // Cooldown between scans to prevent duplicates
     private static long lastScanTime = 0;
@@ -393,9 +393,31 @@ public class SpaceScanner {
                 return;
             }
             
+            // Add wallpaper blocks above and below doors to fill holes
+            Set<BlockPos> additionalBlocks = new HashSet<>();
+            for (BlockPos pos : space) {
+                BlockState state = level.getBlockState(pos);
+                if (isDoorOrTrapdoor(state)) {
+                    // Add block above the door
+                    BlockPos above = pos.above();
+                    if (!space.contains(above) && !isDoorOrTrapdoor(level.getBlockState(above))) {
+                        additionalBlocks.add(above);
+                    }
+                    // Add block below the door
+                    BlockPos below = pos.below();
+                    if (!space.contains(below) && !isDoorOrTrapdoor(level.getBlockState(below))) {
+                        additionalBlocks.add(below);
+                    }
+                }
+            }
+            
+            // Combine original space with additional blocks
+            Set<BlockPos> fullSpace = new HashSet<>(space);
+            fullSpace.addAll(additionalBlocks);
+            
             // Find the minimum coordinates to normalize the room (same as hash)
             int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-            for (BlockPos pos : space) {
+            for (BlockPos pos : fullSpace) {
                 minX = Math.min(minX, pos.getX());
                 minY = Math.min(minY, pos.getY());
                 minZ = Math.min(minZ, pos.getZ());
@@ -413,11 +435,11 @@ public class SpaceScanner {
             writer.write("  \"timestamp\": " + System.currentTimeMillis() + ",\n");
             writer.write("  \"hash\": \"" + roomHash + "\",\n");
             writer.write("  \"roomOrigin\": {\"x\": " + minX + ", \"y\": " + minY + ", \"z\": " + minZ + "},\n");
-            writer.write("  \"blockCount\": " + space.size() + ",\n");
+            writer.write("  \"blockCount\": " + fullSpace.size() + ",\n");
             writer.write("  \"blocks\": [\n");
             
             boolean first = true;
-            for (BlockPos pos : space) {
+            for (BlockPos pos : fullSpace) {
                 if (!first) {
                     writer.write(",\n");
                 }

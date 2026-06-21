@@ -537,6 +537,17 @@ public class SpaceScanner {
             for (BlockPos pos : space) {
                 BlockState state = level.getBlockState(pos);
                 if (isDoorOrTrapdoor(state)) {
+                    // Add block above the door
+                    BlockPos above = pos.above();
+                    if (!space.contains(above) && !isDoorOrTrapdoor(level.getBlockState(above))) {
+                        additionalBlocks.add(above);
+                    }
+                    // Add block below the door
+                    BlockPos below = pos.below();
+                    if (!space.contains(below) && !isDoorOrTrapdoor(level.getBlockState(below))) {
+                        additionalBlocks.add(below);
+                    }
+                    
                     // Check all 4 horizontal directions to determine which sides touch the room interior
                     net.minecraft.core.Direction[] horizontalDirs = {
                         net.minecraft.core.Direction.NORTH,

@@ -1,6 +1,7 @@
 package com.backrooms;
 
 import com.backrooms.command.RandomRoomCommand;
+import com.backrooms.command.ChainRoomCommand;
 import com.backrooms.event.BlockPlacementHandler;
 import com.backrooms.event.DoorInteractionHandler;
 import net.fabricmc.api.ModInitializer;
@@ -26,6 +27,7 @@ public class BackroomsMod implements ModInitializer {
 		// Register commands
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			RandomRoomCommand.register(dispatcher);
+			ChainRoomCommand.register(dispatcher);
 		});
 		
 		LOGGER.info("Scanning system registered!");
